@@ -62,17 +62,23 @@ class LoginView(APIView):
         }
         result_dict = requests.get('https://api.weixin.qq.com/sns/jscode2session',params=params).json()
         # print(result_dict)
+        id = 0
         phone = ser.validated_data.get('phone')
         token = create_id(phone)
-        nickname = json.dumps(request.data.get('nickname'))
+        nickname = request.data.get('nickname')
+        gender = request.data.get('gender')
+        city = request.data.get('city')
         user_object = models.UserInfo.objects.filter(phone=phone).first()
+        id = user_object.id
         if not user_object:
             models.UserInfo.objects.create(
                 **result_dict,
                 token=token,
                 phone=phone,
                 nickname=nickname,
-                avatar=request.data.get('avatar')
+                avatar=request.data.get('avatar'),
+                city=city,
+                gender=gender
             )
         else:
             models.UserInfo.objects.filter(phone=phone).update(
@@ -80,16 +86,42 @@ class LoginView(APIView):
                 token=token,
                 phone=phone,
                 nickname=nickname,
-                avatar=request.data.get('avatar')
+                avatar=request.data.get('avatar'),
+                city=city,
+                gender=gender
             )
-        return Response({'status':True,'data':{'token':token,'phone':phone}})
+        return Response({'status':True,'data':{'token':token,'phone':phone,'id':id}})
+
+class UserinfoView(APIView):
+    def get(self,request,*args,**kwargs):
+        token = request.query_params.get('token')
+        queryset = models.UserInfo.objects.filter(token=token).first()
+        ser = serializer.HomeModelSerializer(instance=queryset)
+        return Response(ser.data)
 
 class HomeView(APIView):
     def get(self,request,*args,**kwargs):
         token = request.query_params.get('token')
         user_object = models.UserInfo.objects.filter(token=token).first()
         ser = serializer.HomeModelSerializer(instance=user_object)
+        # print(ser.data)
         return Response(ser.data,status=status.HTTP_200_OK)
+
+class ChangeInfoView(APIView):
+    authentication_classes = [UserAuthentication,]
+    def post(self,request,*args,**kwargs):
+        school = request.data.get('school')
+        colleage = request.data.get('colleage')
+        if school:
+            ser = serializer.ChangeInfoSchoolModelSerializer(data=request.data)
+            if ser.is_valid():
+                models.UserInfo.objects.filter(token=request.user.token).update(school=school)
+                return Response({},status=status.HTTP_201_CREATED)
+        if colleage:
+            ser = serializer.ChangeInfoColleageModelSerializer(data=request.data)
+            models.UserInfo.objects.filter(token=request.user.token).update(colleage=colleage)
+            if ser.is_valid():
+                return Response({},status=status.HTTP_201_CREATED)
 
 class CredentialTwoView(APIView):
     def get(self,request,*args,**kwargs):
@@ -170,7 +202,7 @@ class CredentialView(APIView):
             print(e)
 
 class AuctionView(ListAPIView,CreateAPIView):
-    queryset = models.ProductInfoRecord.objects.all().order_by('-id')
+    queryset = models.ProductInfoRecord.objects.filter(bool_deal=0).order_by('-id')
 
     def perform_create(self, serializer):
         token = self.request.META.get('HTTP_AUTHORIZATION',None)
@@ -280,6 +312,13 @@ class CategoryView(ListAPIView):
     serializer_class = serializer.CategoryModelSerializer
     queryset = models.ProductCategoryRecord.objects.all()
 
+class CategoryProductView(APIView):
+    def get(self,request,*args,**kwargs):
+        categoryid = request.query_params.get('id')
+        queryset = models.ProductInfoRecord.objects.filter(category_id=categoryid,bool_deal=0)
+        ser = serializer.AuctionListModelSerializer(instance=queryset,many=True)
+        return Response(ser.data)
+
 class TopicView(ListAPIView):
     serializer_class = serializer.TopicModelSerializer
     queryset = models.Topic.objects.all().order_by('-count')
@@ -356,6 +395,18 @@ class CollectNewsView(APIView):
         else:
             result = MiniLimitOffsetPagination().paginate_queryset(queryset,request,self)
         ser = serializer.MyNewsModelSerializer(instance=result,many=True)
+        return Response(ser.data)
+
+class CollectProductView(APIView):
+    def get(self,request,*args,**kwargs):
+        token = request.query_params.get('token')
+        user_object = models.UserInfo.objects.filter(token=token).first()
+        product_object = models.ProductCollectRecord.objects.filter(user=user_object).values('product_id')
+        a = []
+        for i in product_object:
+            a.append(i['product_id'])
+        queryset = models.ProductInfoRecord.objects.filter(id__in=a,bool_deal=0).order_by('-id')
+        ser = serializer.MyProductModelSerializer(instance=queryset,many=True)
         return Response(ser.data)
 
 class NewsAPIView(APIView):
@@ -449,7 +500,7 @@ class CommentFavorView(APIView):
         return Response({'favor_count':count.favor_count},status=status.HTTP_201_CREATED)
 
 class FollowView(APIView):
-    authentication_classes = [UserAuthentication,]
+    authentication_classes = [GeneralAuthentication,]
 
     def post(self,request,*args,**kwargs):
         ser = serializer.FollowModelSerializer(data=request.data)
@@ -491,16 +542,109 @@ class MyMessageView(APIView):
         pass
 
 class WaitProcessView(APIView):
-    authentication_classes = [UserAuthentication,]
+    authentication_classes = [GeneralAuthentication,]
 
     def get(self,request,*args,**kwargs):
-        deal_product = models.DealInfoRecord.objects.all()
+        deal_product = models.DealInfoRecord.objects.filter(agreement=0,performance=0)
         context = []
+        List = []
+        id = 0
         for objects in deal_product:
-            if objects.to_product.pro_user == request.user:
+            if objects.to_product.pro_user.id == request.user.id or objects.from_product_pro_user == request.user.id:
                 context.append(objects)
-        ser = serializer.WaitProcessModelSerializer(instance=context,many=True)
+                # print(context)
+        for product in context:
+            if product.from_product.id != id:
+                List.append(product)
+                id = product.from_product.id
+        ser = serializer.WaitProcessModelSerializer(instance=List,many=True)
         return Response(ser.data)
+
+    def post(self,request,*args,**kwargs):
+        from_product_id = request.data.get('from_product_id')
+        agree = request.data.get('agree')
+        ser = serializer.DealListModelSerializer(data=request.data)
+        if ser.is_valid():
+            if agree == 0:
+                models.DealInfoRecord.objects.filter(from_product_id=from_product_id).update(agreement=1)
+            else:
+                models.DealInfoRecord.objects.filter(from_product_id=from_product_id).update(performance=1)
+                models.ProductInfoRecord.objects.filter(id=from_product_id).update(bool_deal=0)
+            return Response({}, status=status.HTTP_200_OK)
+
+class WaitAuctionView(APIView):
+    authentication_classes = [GeneralAuthentication, ]
+
+    def get(self, request, *args, **kwargs):
+        deal_product = models.DealInfoRecord.objects.filter(agreement=1, performance=0)
+        context = []
+        List = []
+        id = 0
+        for objects in deal_product:
+            if objects.to_product.pro_user.id == request.user.id or objects.from_product_pro_user == request.user.id:
+                context.append(objects)
+                # print(context)
+        for product in context:
+            if product.from_product.id != id:
+                List.append(product)
+                id = product.from_product.id
+        ser = serializer.WaitProcessModelSerializer(instance=List, many=True)
+        return Response(ser.data)
+
+    def post(self,request,*args,**kwargs):
+        from_product_id = request.data.get('from_product_id')
+        agree = request.data.get('agree')
+        ser = serializer.DealListModelSerializer(data=request.data)
+        if ser.is_valid():
+            if agree == 0:
+                models.DealInfoRecord.objects.filter(from_product_id=from_product_id).update(performance=1)
+            return Response({}, status=status.HTTP_200_OK)
+
+class HaveAuctionView(APIView):
+    authentication_classes = [GeneralAuthentication, ]
+
+    def get(self, request, *args, **kwargs):
+        deal_product = models.DealInfoRecord.objects.filter(performance=1)
+        context = []
+        List = []
+        id = 0
+        for objects in deal_product:
+            if objects.to_product.pro_user.id == request.user.id or objects.from_product_pro_user == request.user.id:
+                context.append(objects)
+                # print(context)
+        for product in context:
+            if product.from_product.id != id:
+                List.append(product)
+                id = product.from_product.id
+        ser = serializer.WaitProcessModelSerializer(instance=List, many=True)
+        return Response(ser.data)
+
+class DealDetailView(APIView):
+    def get(self,request,*args,**kwargs):
+        from_product_id = request.query_params.get('from_product_id')
+        from_product = models.DealInfoRecord.objects.filter(from_product_id=from_product_id)
+        ser = serializer.DealAuctionModelSerializer(instance=from_product,many=True)
+        return Response(ser.data)
+
+class ProductDelView(APIView):
+    def post(self,request,*args,**kwargs):
+        ser = serializer.ProductDelModelView(data=request.data)
+        print(ser.is_valid())
+        if ser.is_valid():
+            product_name = request.data.get('product_name')
+            product_object = models.ProductInfoRecord.objects.filter(product_name=product_name)
+            product_object.delete()
+            return Response({},status=status.HTTP_200_OK)
+
+class NewsDelView(APIView):
+    def post(self,request,*args,**kwargs):
+        id = request.data.pop('id')
+        ser = serializer.NewsDelModelView(data=request.data)
+        print(ser.is_valid())
+        if ser.is_valid():
+            news_object = models.News.objects.filter(id=id)
+            news_object.delete()
+            return Response({},status=status.HTTP_200_OK)
 
 
 

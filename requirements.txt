@@ -1,0 +1,15 @@
+asgiref==3.3.1
+certifi==2020.12.5
+chardet==4.0.0
+Django==3.1.4
+django-redis==4.12.1
+djangorestframework==3.12.2
+idna==2.10
+PyMySQL==1.0.2
+pytz==2020.5
+qcloud-python-sts==3.0.5
+redis==3.5.3
+requests==2.25.1
+sqlparse==0.4.1
+tencentcloud-sdk-python==3.0.352
+urllib3==1.26.2

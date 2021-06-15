@@ -8,11 +8,9 @@ class GeneralAuthentication(BaseAuthentication):
         token = request.META.get('HTTP_AUTHORIZATION',None)
         if not token:
             return None
-
         user_object = models.UserInfo.objects.filter(token=token).first()
         if not user_object:
             return None
-
         return (user_object,token)
 
 class UserAuthentication(BaseAuthentication):

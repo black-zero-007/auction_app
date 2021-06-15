@@ -107,7 +107,7 @@ class NewsDetailModelSerializer(serializers.ModelSerializer):
         detail_queryset = models.NewsDetail.objects.filter(news=obj)
         return [model_to_dict(row,['id','cos_path'])for row in detail_queryset]
     def get_user(self,obj):
-        context =  model_to_dict(obj.user,fields=['id','nickname','avatar'])
+        context =  model_to_dict(obj.user,fields=['id','nickname','avatar','token'])
         user_object = self.context['request'].user
         if not user_object:
             return context
@@ -244,7 +244,7 @@ class AuctionDetailModelSerializer(serializers.ModelSerializer):
         return [model_to_dict(row, ['id', 'cos_path']) for row in detail_queryset]
 
     def get_pro_user(self, obj):
-        context = model_to_dict(obj.pro_user, fields=['id', 'nickname', 'avatar'])
+        context = model_to_dict(obj.pro_user, fields=['id', 'nickname', 'avatar','token'])
         user_object = self.context['request'].user
         if not user_object:
             return context
@@ -318,11 +318,11 @@ class HomeModelSerializer(serializers.ModelSerializer):
     article_count = serializers.SerializerMethodField()
     follow_user = serializers.SerializerMethodField()
     fans_user = serializers.SerializerMethodField()
-
+    product_count = serializers.SerializerMethodField()
 
     class Meta:
         model = models.UserInfo
-        exclude = ['phone','avatar','nickname','token','balance','session_key','openid']
+        exclude = ['balance','session_key','openid']
 
     def get_follow_count(self,obj):
         user_object = models.UserInfo.objects.filter(token=obj.token).first()
@@ -330,8 +330,13 @@ class HomeModelSerializer(serializers.ModelSerializer):
         return count
     def get_collect_count(self,obj):
         user_object = models.UserInfo.objects.filter(token=obj.token).first()
-        count = models.NewsCollectRecord.objects.filter(user=user_object).count()
-        return count
+        news_count = models.NewsCollectRecord.objects.filter(user=user_object).count()
+        product_count = models.ProductCollectRecord.objects.filter(user=user_object,product__bool_deal=0).count()
+        context = [
+            {'news_count':news_count},
+            {'product_count':product_count}
+        ]
+        return context
     def get_article_count(self,obj):
         user_object = models.UserInfo.objects.filter(token=obj.token).first()
         count = models.News.objects.filter(user=user_object).count()
@@ -365,6 +370,21 @@ class HomeModelSerializer(serializers.ModelSerializer):
             'user':user
         }
         return context
+    def get_product_count(self,obj):
+        user_object = models.UserInfo.objects.filter(token=obj.token).first()
+        count = models.ProductInfoRecord.objects.filter(pro_user=user_object,bool_deal=0).count()
+        return count
+
+class ChangeInfoSchoolModelSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = models.UserInfo
+        fields = ['school']
+
+class ChangeInfoColleageModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.UserInfo
+        fields = ['colleage']
 
 class CommentModelSerializer(serializers.ModelSerializer):
     create_date = serializers.DateTimeField(format='%Y-%m-%d %H:%M')
@@ -513,10 +533,11 @@ class MyNewsModelSerializer(serializers.ModelSerializer):
 class MyProductModelSerializer(serializers.ModelSerializer):
     cover = serializers.SerializerMethodField()
     category = serializers.SerializerMethodField()
+    user = serializers.SerializerMethodField()
 
     class Meta:
         model = models.ProductInfoRecord
-        fields = ['id', 'product_name', 'category', 'pro_user','cover']
+        fields = ['id', 'product_name', 'category', 'pro_user','cover','viewer_count','user']
 
     def get_cover(self,obj):
         detail_queryset = models.ProductDetail.objects.filter(auction=obj).first()
@@ -525,8 +546,12 @@ class MyProductModelSerializer(serializers.ModelSerializer):
     def get_category(self,obj):
         return model_to_dict(obj.category,['id','category'])
 
-class DealListModelSerializer(serializers.ModelSerializer):
-    pass
+    def get_user(self, obj):
+        return model_to_dict(obj.pro_user, ['id', 'nickname', 'avatar'])
+
+class DealListModelSerializer(serializers.Serializer):
+    from_product_id = serializers.IntegerField(label='交易物品Id')
+    agree = serializers.IntegerField()
 
 class DealCreateModelSerializer(serializers.ModelSerializer):
     productIdList = serializers.SerializerMethodField()
@@ -536,11 +561,126 @@ class DealCreateModelSerializer(serializers.ModelSerializer):
         exclude = ['datatime','finish_time','to_product']
 
 class WaitProcessModelSerializer(serializers.ModelSerializer):
+    datatime = serializers.DateTimeField(format="%Y-%m-%d")
+    finish_time = serializers.DateTimeField(format="%Y-%m-%d")
+    from_product_avatar = serializers.SerializerMethodField()
+    from_product_category = serializers.SerializerMethodField()
+    from_productinfo = serializers.SerializerMethodField()
 
     class Meta:
         model = models.DealInfoRecord
-        exclude = ['finish_time','datatime',]
+        fields = '__all__'
 
+    def get_from_productinfo(self,obj):
+        from_product = models.ProductInfoRecord.objects.filter(id=obj.from_product.id)
+        return [model_to_dict(row, ['id', 'product_name','pro_user','price','address']) for row in from_product]
+
+    def get_from_product_avatar(self,obj):
+        detail_queryset = models.ProductDetail.objects.filter(auction=obj.from_product)
+        return [model_to_dict(row, ['id', 'cos_path']) for row in detail_queryset]
+
+    def get_from_product_category(self,obj):
+        product_object = models.ProductInfoRecord.objects.filter(id=obj.from_product.id).first()
+        category = models.ProductCategoryRecord.objects.filter(id=product_object.category.id).first()
+        return model_to_dict(category,['category'])
+
+class WaitAuctionModelSerializer(serializers.ModelSerializer):
+    datatime = serializers.DateTimeField(format="%Y-%m-%d")
+    from_product_avatar = serializers.SerializerMethodField()
+    from_product_category = serializers.SerializerMethodField()
+    from_productinfo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.DealInfoRecord
+        exclude = ['finish_time']
+
+    def get_from_productinfo(self,obj):
+        from_product = models.ProductInfoRecord.objects.filter(id=obj.from_product.id)
+        return [model_to_dict(row, ['id', 'product_name','pro_user','price','address']) for row in from_product]
+
+    def get_from_product_avatar(self,obj):
+        detail_queryset = models.ProductDetail.objects.filter(auction=obj.from_product)
+        return [model_to_dict(row, ['id', 'cos_path']) for row in detail_queryset]
+
+    def get_from_product_category(self,obj):
+        product_object = models.ProductInfoRecord.objects.filter(id=obj.from_product.id).first()
+        category = models.ProductCategoryRecord.objects.filter(id=product_object.category.id).first()
+        return model_to_dict(category,['category'])
+
+class HaveAuctionModelSerializer(serializers.ModelSerializer):
+    datatime = serializers.DateTimeField(format="%Y-%m-%d")
+    from_product_avatar = serializers.SerializerMethodField()
+    from_product_category = serializers.SerializerMethodField()
+    from_productinfo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.DealInfoRecord
+        exclude = ['finish_time']
+
+    def get_from_productinfo(self,obj):
+        from_product = models.ProductInfoRecord.objects.filter(id=obj.from_product.id)
+        return [model_to_dict(row, ['id', 'product_name','pro_user','price','address']) for row in from_product]
+
+    def get_from_product_avatar(self,obj):
+        detail_queryset = models.ProductDetail.objects.filter(auction=obj.from_product)
+        return [model_to_dict(row, ['id', 'cos_path']) for row in detail_queryset]
+
+    def get_from_product_category(self,obj):
+        product_object = models.ProductInfoRecord.objects.filter(id=obj.from_product.id).first()
+        category = models.ProductCategoryRecord.objects.filter(id=product_object.category.id).first()
+        return model_to_dict(category,['category'])
+
+class DealAuctionModelSerializer(serializers.ModelSerializer):
+    datatime = serializers.DateTimeField(format="%Y-%m-%d")
+    from_product_avatar = serializers.SerializerMethodField()
+    from_product_category = serializers.SerializerMethodField()
+    from_productinfo = serializers.SerializerMethodField()
+    to_productinfo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.DealInfoRecord
+        exclude = ['finish_time']
+
+    def get_from_productinfo(self, obj):
+        from_product = models.ProductInfoRecord.objects.filter(id=obj.from_product.id)
+        return [model_to_dict(row, ['id', 'product_name', 'pro_user', 'price', 'address']) for row in from_product]
+
+    def get_from_product_avatar(self, obj):
+        detail_queryset = models.ProductDetail.objects.filter(auction=obj.from_product)
+        return [model_to_dict(row, ['id', 'cos_path']) for row in detail_queryset]
+
+    def get_from_product_category(self, obj):
+        product_object = models.ProductInfoRecord.objects.filter(id=obj.from_product.id).first()
+        category = models.ProductCategoryRecord.objects.filter(id=product_object.category.id).first()
+        return model_to_dict(category, ['category'])
+
+    def get_to_productinfo(self, obj):
+        to_product = models.ProductInfoRecord.objects.filter(id=obj.to_product.id).first()
+        category = models.ProductCategoryRecord.objects.filter(id=to_product.category.id).first()
+        detail_queryset = models.ProductDetail.objects.filter(auction=obj.to_product).first()
+        context = []
+        context.append(model_to_dict(to_product, ['id', 'product_name', 'pro_user', 'price', 'address']))
+        context.append(model_to_dict(category, ['category']))
+        context.append(model_to_dict(detail_queryset, ['id', 'cos_path']))
+        return context
+
+class CategoryProductModelSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = models.ProductInfoRecord
+        fields = '__all__'
+
+class ProductDelModelView(serializers.ModelSerializer):
+
+    class Meta:
+        model = models.ProductInfoRecord
+        fields = ['product_name']
+
+class NewsDelModelView(serializers.ModelSerializer):
+
+    class Meta:
+        model = models.News
+        fields = ['content']
 
 
 
